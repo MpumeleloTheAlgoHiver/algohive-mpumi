@@ -28,6 +28,9 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Signature');
 
+  // Log every webhook call for debugging
+  console.log(`[Webhook] 🔔 Webhook called! Method: ${req.method}, Headers:`, JSON.stringify(req.headers, null, 2));
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -82,7 +85,7 @@ export default async function handler(req, res) {
         case 'Approved':
           console.log(`[Webhook] ✅ KYC VERIFIED for user: ${vendor_data}`);
           
-          await supabase
+          const { data: approvedData, error: approvedError } = await supabase
             .from('profiles')
             .update({
               kyc_status: 'verified',
@@ -90,7 +93,14 @@ export default async function handler(req, res) {
               kyc_session_id: session_id,
               updated_at: new Date().toISOString()
             })
-            .eq('id', vendor_data);
+            .eq('id', vendor_data)
+            .select();
+          
+          if (approvedError) {
+            console.error(`[Webhook] ❌ Database update failed for APPROVED user ${vendor_data}:`, approvedError);
+          } else {
+            console.log(`[Webhook] ✅ APPROVED status updated successfully for user ${vendor_data}:`, approvedData);
+          }
 
           break;
 
@@ -124,16 +134,23 @@ export default async function handler(req, res) {
           break;
 
         case 'In Progress':
-          console.log(`[Webhook] ⏳ KYC IN PROGRESS for user: ${vendor_data}`);
+          console.log(`[Webhook] ⏳ KYC IN PROGRESS for user: ${vendor_data} - This should update database from 'unverified' to 'in_progress'!`);
           
-          await supabase
+          const { data: progressData, error: progressError } = await supabase
             .from('profiles')
             .update({
               kyc_status: 'in_progress',
               kyc_session_id: session_id,
               updated_at: new Date().toISOString()
             })
-            .eq('id', vendor_data);
+            .eq('id', vendor_data)
+            .select();
+          
+          if (progressError) {
+            console.error(`[Webhook] ❌ Database update failed for IN PROGRESS user ${vendor_data}:`, progressError);
+          } else {
+            console.log(`[Webhook] ✅ IN PROGRESS status updated successfully for user ${vendor_data}:`, progressData);
+          }
 
           break;
 
