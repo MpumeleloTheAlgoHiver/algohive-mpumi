@@ -1074,22 +1074,58 @@
             return display.isDone;
         }
 
-        // Fetch current KYC status from database and update display
+        // Fetch current KYC status directly from Didit API and update display
         async function refreshKycStatus() {
             try {
-                const { data, error } = await supabase
+                // First get the user's KYC session ID from database
+                const { data: profileData, error: profileError } = await supabase
                     .from('profiles')
-                    .select('kyc_status')
+                    .select('kyc_session_id, kyc_status')
                     .eq('id', user.id)
                     .single();
 
-                if (error) {
-                    console.warn('Could not fetch KYC status:', error);
+                if (profileError) {
+                    console.warn('Could not fetch profile data:', profileError);
                     return false;
                 }
 
+                const sessionId = profileData?.kyc_session_id;
+                
+                // If no session ID exists, user hasn't started KYC yet
+                if (!sessionId) {
+                    console.log('No KYC session ID found - user has not started KYC');
+                    kycDone = updateKycStatusDisplay('unverified');
+                    return false;
+                }
+
+                // Call Didit API directly to get real-time status
+                console.log('🔍 Checking KYC status directly from Didit for session:', sessionId);
+                const response = await fetch(`/api/kyc/session/${encodeURIComponent(sessionId)}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    console.warn('Could not fetch status from Didit:', data);
+                    // Fallback to database status if Didit call fails
+                    kycDone = updateKycStatusDisplay(profileData?.kyc_status);
+                    return kycDone;
+                }
+
+                console.log('📊 Real-time status from Didit:', data.status);
+                
                 const wasKycDone = kycDone;
-                kycDone = updateKycStatusDisplay(data?.kyc_status);
+                kycDone = updateKycStatusDisplay(data.status);
+                
+                // Update database with the latest status from Didit
+                if (data.status && data.status !== profileData?.kyc_status) {
+                    console.log('💾 Updating database with latest status from Didit:', data.status);
+                    await supabase
+                        .from('profiles')
+                        .update({
+                            kyc_status: data.status.toLowerCase(),
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('id', user.id);
+                }
                 
                 // If status changed from not done to done, trigger a celebration
                 if (!wasKycDone && kycDone) {
@@ -1172,7 +1208,7 @@
         const fallback = user.email?.split("@")[0] || "User";
         document.getElementById("hdr-name").textContent = (fn || ln) ? `${fn} ${ln}`.trim() : fallback;
 
-        // KYC + gating - Use actual status instead of boolean
+        // KYC + gating - Start with database status, then update from Didit
         let kycDone = updateKycStatusDisplay(row?.kyc_status);
         let profileComplete = computeProfileComplete(row);
         
@@ -1689,8 +1725,9 @@ renderPlanButtons(row?.subscription || 'free');
             }
         };
 
-        // Also refresh KYC status immediately when page loads
+        // Get real-time KYC status from Didit immediately when page loads
         setTimeout(async () => {
+            console.log('🚀 Getting real-time KYC status from Didit...');
             await refreshKycStatus();
             refreshGates();
         }, 1000);
@@ -1698,7 +1735,7 @@ renderPlanButtons(row?.subscription || 'free');
         // Check for KYC return after page setup
         checkKycReturn();
 
-        // Set up periodic KYC status checking (every 30 seconds)
+        // Set up periodic KYC status checking from Didit (every 15 seconds for real-time updates)
         let kycStatusInterval;
         
         function startKycStatusPolling() {
@@ -1709,14 +1746,16 @@ renderPlanButtons(row?.subscription || 'free');
             
             // Only poll if KYC is not yet verified
             if (!kycDone) {
+                console.log('🔄 Starting real-time KYC status polling from Didit...');
                 kycStatusInterval = setInterval(async () => {
                     await refreshKycStatus();
                     // Stop polling once KYC is done
                     if (kycDone) {
+                        console.log('✅ KYC completed - stopping status polling');
                         clearInterval(kycStatusInterval);
                         kycStatusInterval = null;
                     }
-                }, 30000); // 30 seconds
+                }, 15000); // 15 seconds for more responsive updates
             }
         }
         
