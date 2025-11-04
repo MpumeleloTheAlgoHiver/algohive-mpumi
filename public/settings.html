@@ -1244,7 +1244,7 @@
             const diditStatus = (url.searchParams.get('status') || '').toLowerCase();
             if (!diditId) return;
 
-            // land on the KYC tab
+            // land on the KYC tabs
             if (!location.hash || location.hash.toLowerCase() === '#basic') location.hash = '#docs';
 
             try {
